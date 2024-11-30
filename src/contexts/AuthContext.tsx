@@ -11,13 +11,9 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  // Temporarily set to true for development
+  const [isAuthenticated, setIsAuthenticated] = useState(true);
   const navigate = useNavigate();
-
-  useEffect(() => {
-    const token = localStorage.getItem('auth_token');
-    setIsAuthenticated(!!token);
-  }, []);
 
   const login = (token: string) => {
     localStorage.setItem('auth_token', token);

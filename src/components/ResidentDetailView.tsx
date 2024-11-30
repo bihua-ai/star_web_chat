@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLanguage } from '../contexts/LanguageContext';
 import type { Resident } from '../types/list';
 import { Save, UserCog, Mail, Clock, Shield, Activity, Maximize2, Minimize2 } from 'lucide-react';
+import { buildApiUrl } from '../config/api';
 
 interface ResidentDetailViewProps {
   resident: Resident | undefined;
@@ -24,7 +25,7 @@ export default function ResidentDetailView({ resident }: ResidentDetailViewProps
       setIsLoadingProfile(true);
       setProfileError(null);
       try {
-        const response = await fetch(`/api/resident_profile/${resident.resident_id}`);
+        const response = await fetch(buildApiUrl(`/resident_profile/${resident.resident_id}`));
         if (!response.ok) throw new Error('Failed to fetch profile');
         const data = await response.json();
         setProfile(data.profile || '');
@@ -46,7 +47,7 @@ export default function ResidentDetailView({ resident }: ResidentDetailViewProps
     e.preventDefault();
     setError(null);
     try {
-      const response = await fetch(`/api/residents/${resident.resident_id}`, {
+      const response = await fetch(buildApiUrl(`/residents/${resident.resident_id}`), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -69,7 +70,7 @@ export default function ResidentDetailView({ resident }: ResidentDetailViewProps
   const handleProfileSave = async () => {
     setProfileError(null);
     try {
-      const response = await fetch(`/api/resident_profile/${resident.resident_id}/`, {
+      const response = await fetch(buildApiUrl(`/resident_profile/${resident.resident_id}/`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -91,6 +92,7 @@ export default function ResidentDetailView({ resident }: ResidentDetailViewProps
     }
   };
 
+  // Rest of the component remains the same
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">

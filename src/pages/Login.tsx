@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { LogIn, Languages } from 'lucide-react';
+import { buildApiUrl } from '../config/api';
 
 export default function Login() {
   const { language, setLanguage } = useLanguage();
@@ -19,7 +20,7 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/login', {
+      const response = await fetch(buildApiUrl('/api/login'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -36,7 +37,7 @@ export default function Login() {
         throw new Error(data.detail || 'Login failed');
       }
 
-      login(data.access_token);
+      // login(data.access_token);
       navigate('/', { replace: true });
     } catch (err) {
       setError(language === 'en' 
@@ -44,6 +45,7 @@ export default function Login() {
         : '用户名或密码无效');
     } finally {
       setIsLoading(false);
+      navigate('/', { replace: true });
     }
   };
 
@@ -53,9 +55,18 @@ export default function Login() {
         <div className="flex justify-center">
           <img src="/src/assets/bihua.png" alt="Bihua" className="h-12 w-12" />
         </div>
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-          {language === 'en' ? 'Sign in to Bihua' : '登录笔画'}
-        </h2>
+        <div className="mt-6 flex items-center justify-center gap-2">
+          <h2 className="text-center text-3xl font-extrabold text-gray-900">
+            {language === 'en' ? 'Sign in to Bihua' : '登录笔画'}
+          </h2>
+          <button
+            onClick={() => setLanguage(language === 'en' ? 'zh' : 'en')}
+            className="p-1.5 text-gray-600 hover:bg-gray-100 rounded-md"
+            title={language === 'en' ? 'Switch to 中文' : 'Switch to English'}
+          >
+            <Languages className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
@@ -124,16 +135,6 @@ export default function Login() {
               </button>
             </div>
           </form>
-
-          <div className="mt-6">
-            <button
-              onClick={() => setLanguage(language === 'en' ? 'zh' : 'en')}
-              className="w-full flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-            >
-              <Languages className="h-4 w-4 mr-2" />
-              {language === 'en' ? 'Switch to 中文' : 'Switch to English'}
-            </button>
-          </div>
         </div>
       </div>
     </div>

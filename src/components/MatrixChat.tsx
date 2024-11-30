@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createClient, MatrixClient } from 'matrix-js-sdk';
-import { Send, MessageSquare } from 'lucide-react';
+import { createClient } from 'matrix-js-sdk';
+import { Send, Upload, Mic } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
-import { useNavigate } from 'react-router-dom';
+import { MATRIX_CONFIG } from '../config/api';
+import VoiceRecorder from './VoiceRecorder';
 
 interface Message {
   id: string;
@@ -13,130 +14,74 @@ interface Message {
 
 export default function MatrixChat() {
   const { language } = useLanguage();
-  const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [isExpanded, setIsExpanded] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const clientRef = useRef<MatrixClient | null>(null);
-
-  const handleNavigation = (content: string) => {
-    // Convert content to lowercase for case-insensitive matching
-    const lowerContent = content.toLowerCase();
-    
-    // Navigation patterns
-    const patterns = {
-      residents: {
-        pattern: /(?:go to|show|view|open)\s+resident\s+(@[\w.-]+:[\w.-]+)/i,
-        route: (id: string) => `/residents/${encodeURIComponent(id)}`
-      },
-      groups: {
-        pattern: /(?:go to|show|view|open)\s+group\s+(![\w.-]+:[\w.-]+)/i,
-        route: (id: string) => `/groups/${encodeURIComponent(id)}`
-      },
-      models: {
-        pattern: /(?:go to|show|view|open)\s+model\s+([\w-]+)/i,
-        route: (id: string) => `/models/${encodeURIComponent(id)}`
-      },
-      sections: {
-        pattern: /(?:go to|show|view|open)\s+(residents|groups|models|settings|learn)/i,
-        route: (section: string) => `/${section.toLowerCase()}`
-      }
-    };
-
-    // Check for specific item navigation
-    for (const [key, { pattern, route }] of Object.entries(patterns)) {
-      const match = content.match(pattern);
-      if (match) {
-        if (key === 'sections') {
-          navigate(route(match[1]));
-        } else {
-          navigate(route(match[1]));
-        }
-        return true;
-      }
-    }
-
-    // Check for general navigation commands
-    if (lowerContent.includes('go home') || lowerContent.includes('go to home')) {
-      navigate('/');
-      return true;
-    }
-
-    // Handle list viewing commands
-    if (lowerContent.includes('show all residents') || lowerContent.includes('list residents')) {
-      navigate('/residents');
-      return true;
-    }
-    if (lowerContent.includes('show all groups') || lowerContent.includes('list groups')) {
-      navigate('/groups');
-      return true;
-    }
-    if (lowerContent.includes('show all models') || lowerContent.includes('list models')) {
-      navigate('/models');
-      return true;
-    }
-
-    return false;
-  };
+  const clientRef = useRef<any>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const processedMessagesRef = useRef(new Set<string>());
+  const retryTimeoutRef = useRef<NodeJS.Timeout>();
 
   useEffect(() => {
     const initMatrix = async () => {
       try {
-        // In a real app, these would come from environment variables or user login
-        const homeserverUrl = "https://matrix.org";
-        const userId = "@guest-user:matrix.org";
-        const accessToken = "demo-access-token";
-
-        clientRef.current = createClient({
-          baseUrl: homeserverUrl,
-          userId,
-          accessToken,
+        const client = createClient({
+          baseUrl: MATRIX_CONFIG.homeserverUrl,
+          userId: MATRIX_CONFIG.userId,
         });
 
-        clientRef.current.on("Room.timeline", (event: any) => {
-          if (event.getType() === "m.room.message") {
+        await client.login('m.login.password', {
+          user: MATRIX_CONFIG.userId,
+          password: MATRIX_CONFIG.password,
+        });
+
+        client.on('Room.timeline', (event: any) => {
+          if (event.getType() === 'm.room.message' && !processedMessagesRef.current.has(event.getId())) {
+            processedMessagesRef.current.add(event.getId());
             const content = event.getContent();
-            
-            // Add message to chat
             setMessages(prev => [...prev, {
               id: event.getId(),
               content: content.body,
               sender: event.getSender(),
-              timestamp: event.getTs()
+              timestamp: event.getTs(),
             }]);
-
-            // Try to navigate based on message content
-            handleNavigation(content.body);
           }
         });
 
-        // For demo purposes, we'll just set connected state
-        // In a real app, you'd want to properly handle the sync state
+        await client.startClient();
+        clientRef.current = client;
         setIsConnected(true);
         setError(null);
 
-      } catch (err) {
+      } catch (err: any) {
+        console.error('Matrix init error:', err);
         setError(language === 'en' 
           ? 'Failed to connect to chat server' 
           : '无法连接到聊天服务器');
         setIsConnected(false);
+
+        // Retry after delay if rate limited
+        if (err.httpStatus === 429) {
+          const retryAfter = err.data?.retry_after_ms || 5000;
+          retryTimeoutRef.current = setTimeout(initMatrix, retryAfter);
+        }
       }
     };
 
-    if (isExpanded && !clientRef.current) {
-      initMatrix();
-    }
+    initMatrix();
 
     return () => {
       if (clientRef.current) {
         clientRef.current.stopClient();
-        clientRef.current = null;
+      }
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
       }
     };
-  }, [isExpanded, language, navigate]);
+  }, [language]);
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -148,11 +93,14 @@ export default function MatrixChat() {
     if (!newMessage.trim() || !clientRef.current || !isConnected) return;
 
     try {
-      const roomId = "!demo-room:matrix.org"; // Demo room ID
-      await clientRef.current.sendTextMessage(roomId, newMessage.trim());
+      await clientRef.current.sendTextMessage(
+        MATRIX_CONFIG.defaultRoomId,
+        newMessage.trim()
+      );
       setNewMessage('');
       setError(null);
     } catch (err) {
+      console.error('Error sending event:', err);
       setError(language === 'en' 
         ? 'Failed to send message' 
         : '发送消息失败');
@@ -166,86 +114,139 @@ export default function MatrixChat() {
     }
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !clientRef.current || !isConnected) return;
+
+    try {
+      const content = {
+        body: file.name,
+        filename: file.name,
+        info: {
+          size: file.size,
+          mimetype: file.type,
+        },
+        msgtype: 'm.file',
+      };
+
+      await clientRef.current.uploadContent(file);
+      await clientRef.current.sendMessage(MATRIX_CONFIG.defaultRoomId, content);
+      setError(null);
+    } catch (err) {
+      console.error('Error uploading file:', err);
+      setError(language === 'en' 
+        ? 'Failed to upload file' 
+        : '上传文件失败');
+    }
+  };
+
+  const handleVoiceRecording = async (blob: Blob) => {
+    if (!clientRef.current || !isConnected) return;
+
+    try {
+      const content = {
+        body: 'Voice message',
+        info: {
+          size: blob.size,
+          mimetype: blob.type,
+        },
+        msgtype: 'm.audio',
+      };
+
+      await clientRef.current.uploadContent(blob);
+      await clientRef.current.sendMessage(MATRIX_CONFIG.defaultRoomId, content);
+      setError(null);
+    } catch (err) {
+      console.error('Error sending voice message:', err);
+      setError(language === 'en' 
+        ? 'Failed to send voice message' 
+        : '发送语音消息失败');
+    }
+  };
+
   return (
-    <div className={`bg-white rounded-lg shadow-sm transition-all duration-300 ${
-      isExpanded ? 'h-96' : 'h-12'
-    }`}>
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-4 py-3 flex items-center justify-between text-gray-700 hover:bg-gray-50"
-      >
-        <span className="flex items-center gap-2">
-          <MessageSquare className="h-5 w-5" />
-          <span className="font-medium">
-            {language === 'en' ? 'Chat' : '聊天'}
-          </span>
-        </span>
-        <span className="text-xs text-gray-500">
-          {isExpanded ? (language === 'en' ? 'Close' : '关闭') : (language === 'en' ? 'Open' : '打开')}
-        </span>
-      </button>
-
-      {isExpanded && (
-        <div className="h-[calc(100%-3rem)] flex flex-col">
-          <div className="flex-1 overflow-y-auto p-4 space-y-2">
-            {error && (
-              <div className="p-2 bg-red-50 text-red-600 rounded-md text-sm">
-                {error}
-              </div>
-            )}
-            
-            {messages.length === 0 && (
-              <div className="text-center text-gray-500 py-4">
-                {language === 'en' 
-                  ? 'No messages yet' 
-                  : '暂无消息'}
-              </div>
-            )}
-
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`p-2 rounded-lg max-w-[80%] ${
-                  message.sender === clientRef.current?.getUserId()
-                    ? 'ml-auto bg-indigo-100'
-                    : 'bg-gray-100'
-                }`}
-              >
-                <div className="text-sm">{message.content}</div>
-                <div className="text-xs text-gray-500 mt-1">
-                  {new Date(message.timestamp).toLocaleTimeString()}
-                </div>
-              </div>
-            ))}
-            <div ref={messagesEndRef} />
+    <div className="flex flex-col h-[calc(100vh-16rem)] max-h-[66vh]">
+      <div className="flex-1 overflow-y-auto p-4 space-y-2 min-h-0">
+        {error && (
+          <div className="p-2 bg-red-50 text-red-600 rounded-md text-sm">
+            {error}
           </div>
+        )}
+        
+        {messages.length === 0 && (
+          <div className="text-center text-gray-500 py-4">
+            {language === 'en' 
+              ? 'No messages yet' 
+              : '暂无消息'}
+          </div>
+        )}
 
-          <div className="p-4 border-t">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder={language === 'en' ? 'Type a message...' : '输入消息...'}
-                className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                disabled={!isConnected}
-              />
-              <button
-                onClick={handleSend}
-                disabled={!isConnected || !newMessage.trim()}
-                className={`p-2 text-white rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
-                  isConnected && newMessage.trim()
-                    ? 'bg-indigo-600 hover:bg-indigo-700'
-                    : 'bg-gray-400 cursor-not-allowed'
-                }`}
-              >
-                <Send className="h-5 w-5" />
-              </button>
+        {messages.map((message) => (
+          <div
+            key={`${message.id}-${message.timestamp}`}
+            className={`p-2 rounded-lg max-w-[80%] ${
+              message.sender === clientRef.current?.getUserId()
+                ? 'ml-auto bg-indigo-100'
+                : 'bg-gray-100'
+            }`}
+          >
+            <div className="text-sm">{message.content}</div>
+            <div className="text-xs text-gray-500 mt-1">
+              {new Date(message.timestamp).toLocaleTimeString()}
             </div>
           </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div className="flex-shrink-0 p-4 border-t">
+        <div className="flex items-center gap-1 mb-2">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="p-1.5 text-gray-600 hover:text-gray-900 rounded-md"
+            disabled={!isConnected}
+            title={language === 'en' ? 'Upload file' : '上传文件'}
+          >
+            <Upload className="h-4 w-4" />
+          </button>
+          
+          <VoiceRecorder
+            onRecordingComplete={handleVoiceRecording}
+            disabled={!isConnected}
+            compact={true}
+          />
         </div>
-      )}
+
+        <div className="relative">
+          <textarea
+            ref={textareaRef}
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder={language === 'en' ? 'Type a message...' : '输入消息...'}
+            className="w-full px-3 py-2 pr-12 border rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y min-h-[2.5rem] max-h-[8rem]"
+            disabled={!isConnected}
+            rows={1}
+          />
+          <button
+            onClick={handleSend}
+            disabled={!isConnected || !newMessage.trim()}
+            className={`absolute right-2 bottom-2 p-1.5 rounded-md ${
+              isConnected && newMessage.trim()
+                ? 'text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50'
+                : 'text-gray-400 cursor-not-allowed'
+            }`}
+          >
+            <Send className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

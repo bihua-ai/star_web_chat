@@ -1,115 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import type { ListType, Resident, Group, LLMModel } from '../types/list';
+import type { ListType, Resident, Group, LLMModel, ApiResponse, ResidentsResponse, GroupsResponse, LLMModelResponse } from '../types/list';
+import { buildApiUrl } from '../config/api';
 import ItemList from './ItemList';
 import { useLanguage } from '../contexts/LanguageContext';
 import ResidentDetailView from './ResidentDetailView';
 import GroupDetailView from './GroupDetailView';
 import Pagination from './Pagination';
 import { UserPlus, Play, Square, X } from 'lucide-react';
-
-interface RegisterDialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onRegister: (username: string, password: string) => Promise<void>;
-  isLoading: boolean;
-  error: string | null;
-}
-
-function RegisterDialog({ isOpen, onClose, onRegister, isLoading, error }: RegisterDialogProps) {
-  const { language } = useLanguage();
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-
-  if (!isOpen) return null;
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await onRegister(username, password);
-    setUsername('');
-    setPassword('');
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 w-full max-w-md">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-medium text-gray-900">
-            {language === 'en' ? 'Register New Resident' : '注册新居民'}
-          </h3>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-500"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        {error && (
-          <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="username" className="block text-sm font-medium text-gray-700">
-              {language === 'en' ? 'Username' : '用户名'}
-            </label>
-            <input
-              type="text"
-              id="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-              required
-            />
-          </div>
-
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-              {language === 'en' ? 'Password' : '密码'}
-            </label>
-            <input
-              type="password"
-              id="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-              required
-            />
-          </div>
-
-          <div className="flex justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-500"
-            >
-              {language === 'en' ? 'Cancel' : '取消'}
-            </button>
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-indigo-400 disabled:cursor-not-allowed"
-            >
-              {isLoading ? (
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white" />
-              ) : (
-                <>
-                  <UserPlus className="h-4 w-4 mr-2" />
-                  {language === 'en' ? 'Register' : '注册'}
-                </>
-              )}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-// Rest of the imports and mock data remain the same...
+import RegisterDialog from './RegisterDialog';
 
 export default function ListContainer() {
   const { type, id } = useParams<{ type: ListType; id: string }>();
@@ -122,6 +21,8 @@ export default function ListContainer() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [isRegisterDialogOpen, setIsRegisterDialogOpen] = useState(false);
   const [registerError, setRegisterError] = useState<string | null>(null);
+  const [listWidth, setListWidth] = useState(350);
+  const [isResizing, setIsResizing] = useState(false);
 
   // Pagination state
   const itemsPerPage = 10;
@@ -132,13 +33,95 @@ export default function ListContainer() {
     currentPage * itemsPerPage
   );
 
-  // Rest of the existing useEffect and handlers...
+  const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
+    mouseDownEvent.preventDefault();
+    setIsResizing(true);
+
+    const startX = mouseDownEvent.clientX;
+    const startWidth = listWidth;
+    
+    const handleMouseMove = (mouseMoveEvent: MouseEvent) => {
+      const deltaX = mouseMoveEvent.clientX - startX;
+      const newWidth = Math.max(200, Math.min(600, startWidth + deltaX));
+      setListWidth(newWidth);
+    };
+    
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [listWidth]);
+
+  useEffect(() => {
+    if (isResizing) {
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    } else {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+  }, [isResizing]);
+
+  useEffect(() => {
+    const fetchItems = async () => {
+      if (!type) return;
+      
+      setLoading(true);
+      setError(null);
+      
+      try {
+        const response = await fetch(buildApiUrl(`/${type}`));
+        if (!response.ok) throw new Error(`Failed to fetch ${type}`);
+        
+        const responseData = await response.json();
+        
+        switch (type) {
+          case 'residents':
+            console.log(responseData.data.residents)
+            
+            setItems(responseData.data.residents);
+            break;
+          case 'groups':
+            setItems(responseData.data.groups);
+            break;
+          case 'models':
+            setItems(responseData.data.llm_model_list);
+            break;
+        }
+      } catch (err) {
+        setError(language === 'en' 
+          ? `Failed to load ${type}` 
+          : `加载${type === 'residents' ? '居民' : type === 'groups' ? '群组' : '模型'}失败`);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchItems();
+  }, [type, language]);
+
+  const handlePageChange = (page: number) => {
+    setSearchParams({ page: page.toString() });
+  };
+
+  const handleItemClick = (item: Resident | Group | LLMModel) => {
+    const itemId = 'resident_id' in item 
+      ? item.resident_id 
+      : 'group_id' in item 
+        ? item.group_id 
+        : item.model_id;
+    navigate(`/${type}/${itemId}`);
+  };
 
   const handleRegisterResident = async (username: string, password: string) => {
     setRegisterError(null);
     setActionLoading('register');
     try {
-      const response = await fetch('/api/register', {
+      const response = await fetch(buildApiUrl('/register'), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -165,7 +148,43 @@ export default function ListContainer() {
     }
   };
 
-  // Rest of the existing handlers...
+  const handleRunAgents = async () => {
+    setActionLoading('run');
+    try {
+      const response = await fetch(buildApiUrl('/agents/run'), {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to run agents');
+      }
+    } catch (err) {
+      setError(language === 'en' 
+        ? 'Failed to run agents' 
+        : '启动代理失败');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleStopAgents = async () => {
+    setActionLoading('stop');
+    try {
+      const response = await fetch(buildApiUrl('/agents/stop'), {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to stop agents');
+      }
+    } catch (err) {
+      setError(language === 'en' 
+        ? 'Failed to stop agents' 
+        : '停止代理失败');
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   if (!type) {
     return (
@@ -178,50 +197,53 @@ export default function ListContainer() {
   }
 
   return (
-    <div className="flex h-full gap-6">
-      <div className="w-80 bg-white rounded-lg shadow-sm">
+    <div className="flex h-full gap-0">
+      <div 
+        style={{ width: `${listWidth}px`, minWidth: `${listWidth}px` }}
+        className="bg-white rounded-lg shadow-sm flex flex-col"
+      >
         {type === 'residents' && (
           <div className="p-4 border-b border-gray-200">
-            <div className="flex flex-col gap-2">
+            <div className="flex gap-2 justify-start">
               <button
                 onClick={() => setIsRegisterDialogOpen(true)}
                 disabled={actionLoading === 'register'}
-                className="w-full flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-indigo-400 disabled:cursor-not-allowed"
+                className="w-24 flex items-center justify-center px-2 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-indigo-400 disabled:cursor-not-allowed"
               >
                 {actionLoading === 'register' ? (
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white" />
                 ) : (
                   <>
-                    <UserPlus className="h-4 w-4 mr-2" />
-                    {language === 'en' ? 'Register Resident' : '注册居民'}
+                    <UserPlus className="h-4 w-4" />
+                    <span className="ml-1 text-xs">{language === 'en' ? 'Register' : '注册'}</span>
                   </>
                 )}
               </button>
               <button
                 onClick={handleRunAgents}
                 disabled={actionLoading === 'run'}
-                className="w-full flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:bg-green-400 disabled:cursor-not-allowed"
+                className="w-24 flex items-center justify-center px-2 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:bg-green-400 disabled:cursor-not-allowed"
               >
                 {actionLoading === 'run' ? (
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white" />
                 ) : (
                   <>
-                    <Play className="h-4 w-4 mr-2" />
-                    {language === 'en' ? 'Run Agents' : '启动代理'}
+                    <Play className="h-4 w-4" />
+                    <span className="ml-1 text-xs">{language === 'en' ? 'Run' : '启动'}</span>
                   </>
                 )}
               </button>
               <button
                 onClick={handleStopAgents}
                 disabled={actionLoading === 'stop'}
-                className="w-full flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:bg-red-400 disabled:cursor-not-allowed"
+                className="w-24 flex items-center justify-center px-2 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:bg-red-400 disabled:cursor-not-allowed"
               >
                 {actionLoading === 'stop' ? (
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white" />
                 ) : (
                   <>
-                    <Square className="h-4 w-4 mr-2" />
-                    {language === 'en' ? 'Stop Agents' : '停止代理'}
+                    <Square className="h-4 w-4" />
+                    <span className="ml-1 text-xs">{language === 'en' ? 'Stop' : '停止'}</span>
                   </>
                 )}
               </button>
@@ -259,7 +281,16 @@ export default function ListContainer() {
         </div>
       </div>
       
-      <div className="flex-1 bg-white rounded-lg shadow-sm p-6">
+      <div
+        className={`w-2 cursor-col-resize hover:bg-indigo-200 relative group ${
+          isResizing ? 'bg-indigo-300' : 'bg-transparent'
+        }`}
+        onMouseDown={startResizing}
+      >
+        <div className="absolute inset-y-0 left-1/2 w-px bg-gray-200 group-hover:bg-indigo-300" />
+      </div>
+
+      <div className="flex-1 bg-white rounded-lg shadow-sm p-6 ml-4">
         {id ? (
           type === 'residents' ? (
             <ResidentDetailView resident={items.find(r => 'resident_id' in r && r.resident_id === id) as Resident} />
